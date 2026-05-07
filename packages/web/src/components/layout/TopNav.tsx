@@ -1,8 +1,25 @@
 import { NavLink, Link } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
-import { LayoutDashboard, MessageSquare, Workflow, Settings } from 'lucide-react';
+import {
+  LayoutDashboard,
+  MessageSquare,
+  Workflow,
+  Settings,
+  Sun,
+  Moon,
+  Monitor,
+} from 'lucide-react';
 import { listDashboardRuns, getUpdateCheck } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { useTheme } from '@/contexts/ThemeContext';
+
+type ThemeOption = 'light' | 'dark' | 'system';
+
+const themeOptions: { value: ThemeOption; icon: typeof Sun; label: string }[] = [
+  { value: 'light', icon: Sun, label: 'Light' },
+  { value: 'dark', icon: Moon, label: 'Dark' },
+  { value: 'system', icon: Monitor, label: 'System' },
+];
 
 const tabs = [
   { to: '/chat', end: false, icon: MessageSquare, label: 'Chat' },
@@ -66,21 +83,51 @@ export function TopNav(): React.ReactElement {
           )}
         </NavLink>
       ))}
-      <span className="ml-auto text-xs text-text-secondary">
-        v{import.meta.env.VITE_APP_VERSION as string}
-        {updateCheck?.updateAvailable && updateCheck.releaseUrl && (
-          <a
-            href={updateCheck.releaseUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="ml-1.5 inline-flex items-center gap-1 text-xs text-primary hover:underline"
-            title={`v${updateCheck.latestVersion} available`}
-          >
-            <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />v
-            {updateCheck.latestVersion}
-          </a>
-        )}
-      </span>
+      <div className="ml-auto flex items-center gap-3">
+        <span className="text-xs text-text-secondary">
+          v{import.meta.env.VITE_APP_VERSION as string}
+          {updateCheck?.updateAvailable && updateCheck.releaseUrl && (
+            <a
+              href={updateCheck.releaseUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="ml-1.5 inline-flex items-center gap-1 text-xs text-primary hover:underline"
+              title={`v${updateCheck.latestVersion} available`}
+            >
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />v
+              {updateCheck.latestVersion}
+            </a>
+          )}
+        </span>
+        <ThemeToggle />
+      </div>
     </nav>
+  );
+}
+
+function ThemeToggle(): React.ReactElement {
+  const { theme, setTheme } = useTheme();
+
+  return (
+    <div className="flex items-center rounded-md border border-border bg-surface p-0.5 gap-0.5">
+      {themeOptions.map(({ value, icon: Icon, label }) => (
+        <button
+          key={value}
+          onClick={(): void => {
+            setTheme(value);
+          }}
+          className={cn(
+            'cursor-pointer rounded-sm p-1.5 transition-colors',
+            theme === value
+              ? 'bg-accent text-accent-foreground'
+              : 'text-text-tertiary hover:text-text-secondary'
+          )}
+          title={label}
+          aria-label={`${label} theme`}
+        >
+          <Icon className="h-4 w-4" />
+        </button>
+      ))}
+    </div>
   );
 }

@@ -66,6 +66,7 @@ e2e-screenshots/
 .agents/pr-reviews
 .claude/PRPs/
 .claude/archon/
+.claude/logs/
 .claude/mockups/
 .claude/settings.local.json
 .claude/scheduled_tasks.lock

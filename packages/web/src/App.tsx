@@ -4,6 +4,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { Layout } from '@/components/layout/Layout';
 import { ProjectProvider } from '@/contexts/ProjectContext';
+import { ThemeProvider } from '@/contexts/ThemeContext';
 import { queryClient } from '@/lib/query-client';
 import { DashboardPage } from '@/routes/DashboardPage';
 import { ChatPage } from '@/routes/ChatPage';
@@ -38,17 +39,17 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
   render(): ReactNode {
     if (this.state.hasError) {
       return (
-        <div className="flex h-screen items-center justify-center bg-zinc-950 p-8">
+        <div className="flex h-screen items-center justify-center bg-background p-8">
           <div className="max-w-md text-center">
-            <h1 className="mb-2 text-xl font-semibold text-zinc-100">Something went wrong</h1>
-            <p className="mb-4 text-sm text-zinc-400">
+            <h1 className="mb-2 text-xl font-semibold text-foreground">Something went wrong</h1>
+            <p className="mb-4 text-sm text-muted-foreground">
               {this.state.error?.message ?? 'An unexpected error occurred.'}
             </p>
             <button
               onClick={(): void => {
                 window.location.reload();
               }}
-              className="rounded-md bg-zinc-800 px-4 py-2 text-sm text-zinc-200 hover:bg-zinc-700"
+              className="rounded-md bg-secondary px-4 py-2 text-sm text-secondary-foreground hover:bg-accent"
             >
               Reload page
             </button>
@@ -64,23 +65,25 @@ export function App(): React.ReactElement {
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
-        <ProjectProvider>
-          <BrowserRouter>
-            <Routes>
-              <Route element={<Layout />}>
-                <Route path="/" element={<Navigate to="/chat" replace />} />
-                <Route path="/chat" element={<ChatPage />} />
-                <Route path="/chat/*" element={<ChatPage />} />
-                <Route path="/dashboard" element={<DashboardPage />} />
-                <Route path="/workflows" element={<WorkflowsPage />} />
-                <Route path="/workflows/builder" element={<WorkflowBuilderPage />} />
-                <Route path="/workflows/runs/:runId" element={<WorkflowExecutionPage />} />
-                <Route path="/workflows/runs" element={<Navigate to="/workflows" replace />} />
-                <Route path="/settings" element={<SettingsPage />} />
-              </Route>
-            </Routes>
-          </BrowserRouter>
-        </ProjectProvider>
+        <ThemeProvider>
+          <ProjectProvider>
+            <BrowserRouter>
+              <Routes>
+                <Route element={<Layout />}>
+                  <Route path="/" element={<Navigate to="/chat" replace />} />
+                  <Route path="/chat" element={<ChatPage />} />
+                  <Route path="/chat/*" element={<ChatPage />} />
+                  <Route path="/dashboard" element={<DashboardPage />} />
+                  <Route path="/workflows" element={<WorkflowsPage />} />
+                  <Route path="/workflows/builder" element={<WorkflowBuilderPage />} />
+                  <Route path="/workflows/runs/:runId" element={<WorkflowExecutionPage />} />
+                  <Route path="/workflows/runs" element={<Navigate to="/workflows" replace />} />
+                  <Route path="/settings" element={<SettingsPage />} />
+                </Route>
+              </Routes>
+            </BrowserRouter>
+          </ProjectProvider>
+        </ThemeProvider>
       </QueryClientProvider>
     </ErrorBoundary>
   );
