@@ -2507,6 +2507,18 @@ export async function executeDagWorkflow(
   priorCompletedNodes?: Map<string, string>
 ): Promise<string | undefined> {
   const dagStartTime = Date.now();
+
+  // FORK-ONLY: inject per-workflow deployment tag so providers (especially Codex)
+  // can tag OTEL spans with the workflow name. See f-lf2-codex-otel-tagging.md
+  const deploymentEnv = `archon-${workflow.name}`;
+  config = {
+    ...config,
+    envVars: {
+      ...config.envVars,
+      ARCHON_DEPLOYMENT_ENVIRONMENT: deploymentEnv,
+    },
+  };
+
   const workflowLevelOptions = {
     effort: workflow.effort,
     thinking: workflow.thinking,

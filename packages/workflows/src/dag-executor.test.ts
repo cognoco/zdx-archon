@@ -5487,10 +5487,13 @@ describe('executeDagWorkflow -- env var injection', () => {
 
     expect(mockSendQueryDag.mock.calls.length).toBeGreaterThan(0);
     const optionsArg = mockSendQueryDag.mock.calls[0][3] as Record<string, unknown>;
-    expect(optionsArg?.env).toEqual({ MY_SECRET: 'abc123' });
+    const env = optionsArg?.env as Record<string, string>;
+    expect(env.MY_SECRET).toBe('abc123');
+    // FORK-ONLY: ARCHON_DEPLOYMENT_ENVIRONMENT is injected per-workflow for OTEL tagging
+    expect(env.ARCHON_DEPLOYMENT_ENVIRONMENT).toBe('archon-dag-env-test');
   });
 
-  it('does not set env on claudeOptions when config.envVars is empty', async () => {
+  it('injects ARCHON_DEPLOYMENT_ENVIRONMENT even when config.envVars is empty', async () => {
     const mockDeps = createMockDeps();
     const platform = createMockPlatform();
     const workflowRun = makeWorkflowRun();
@@ -5513,7 +5516,9 @@ describe('executeDagWorkflow -- env var injection', () => {
 
     expect(mockSendQueryDag.mock.calls.length).toBeGreaterThan(0);
     const optionsArg = mockSendQueryDag.mock.calls[0]?.[3] as Record<string, unknown> | undefined;
-    expect(optionsArg?.env).toBeUndefined();
+    // FORK-ONLY: env is always set because ARCHON_DEPLOYMENT_ENVIRONMENT is injected
+    const env = optionsArg?.env as Record<string, string>;
+    expect(env.ARCHON_DEPLOYMENT_ENVIRONMENT).toBe('archon-dag-no-env');
   });
 });
 
