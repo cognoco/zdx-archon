@@ -93,14 +93,35 @@ function buildCodexEnv(requestEnv: Record<string, string>): Record<string, strin
 }
 
 // FORK-ONLY: see .archon/_temp/f-lf2-codex-otel-tagging.md in cognoco/eduagent-build
-function buildArchonCodexConfig(env?: Record<string, string>): CodexConfigObject | undefined {
-  const value =
+function resolveDeploymentEnv(env?: Record<string, string>): string | undefined {
+  return (
     env?.ARCHON_DEPLOYMENT_ENVIRONMENT ??
     env?.LOGFIRE_ENVIRONMENT ??
     process.env.ARCHON_DEPLOYMENT_ENVIRONMENT ??
-    process.env.LOGFIRE_ENVIRONMENT;
+    process.env.LOGFIRE_ENVIRONMENT ??
+    undefined
+  );
+}
+
+// Round 1 defense-in-depth: passes config.otel.environment to the SDK.
+// Codex CLI currently ignores this field for OTel resource attributes,
+// but keeping it in case a future version starts honoring it.
+function buildArchonCodexConfig(env?: Record<string, string>): CodexConfigObject | undefined {
+  const value = resolveDeploymentEnv(env);
   if (!value) return undefined;
   return { otel: { environment: value } };
+}
+
+// Round 3: set OTEL_RESOURCE_ATTRIBUTES on the codex CLI subprocess env.
+// This is the standard OTel SDK mechanism for resource attributes and is
+// honored by codex's Rust OTel instrumentation.
+function buildArchonOtelEnv(env?: Record<string, string>): Record<string, string> {
+  const value = resolveDeploymentEnv(env);
+  if (!value) return {};
+  const existing = env?.OTEL_RESOURCE_ATTRIBUTES ?? '';
+  const ours = `deployment.environment=${value}`;
+  const merged = existing ? `${existing},${ours}` : ours;
+  return { OTEL_RESOURCE_ATTRIBUTES: merged };
 }
 
 const CODEX_MODEL_FALLBACKS: Record<string, string> = {
@@ -531,18 +552,24 @@ export class CodexProvider implements IAgentProvider {
     configCodexBinaryPath: string | undefined,
     requestEnv?: Record<string, string>
   ): Promise<Codex> {
-    // FORK-ONLY: derive otel config from archon deployment env
+    // FORK-ONLY: derive otel tagging from archon deployment env
     const archonConfig = buildArchonCodexConfig(requestEnv);
+    const archonOtelEnv = buildArchonOtelEnv(requestEnv);
     const hasRequestEnv = !!requestEnv && Object.keys(requestEnv).length > 0;
+    const hasOtelEnv = Object.keys(archonOtelEnv).length > 0;
 
-    if (!hasRequestEnv && !archonConfig) {
+    if (!hasRequestEnv && !archonConfig && !hasOtelEnv) {
       return getCodex(configCodexBinaryPath);
     }
 
     try {
+      const baseEnv = hasRequestEnv && requestEnv ? buildCodexEnv(requestEnv) : {};
+      const mergedEnv = { ...baseEnv, ...archonOtelEnv };
+      const hasEnv = Object.keys(mergedEnv).length > 0;
+
       return new Codex({
         codexPathOverride: await resolveCodexBinaryPath(configCodexBinaryPath),
-        ...(hasRequestEnv && requestEnv && { env: buildCodexEnv(requestEnv) }),
+        ...(hasEnv && { env: mergedEnv }),
         ...(archonConfig && { config: archonConfig }),
       });
     } catch (error) {
