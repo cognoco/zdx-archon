@@ -784,20 +784,32 @@ describe('CodexProvider', () => {
     });
 
     test('reuses the singleton Codex instance across sequential calls without env', async () => {
-      mockRunStreamed.mockResolvedValue({
-        events: (async function* () {
-          yield { type: 'turn.completed', usage: defaultUsage };
-        })(),
-      });
+      const origArchon = process.env.ARCHON_DEPLOYMENT_ENVIRONMENT;
+      const origLogfire = process.env.LOGFIRE_ENVIRONMENT;
+      delete process.env.ARCHON_DEPLOYMENT_ENVIRONMENT;
+      delete process.env.LOGFIRE_ENVIRONMENT;
 
-      for await (const _ of client.sendQuery('first prompt', '/workspace')) {
-        // consume
-      }
-      for await (const _ of client.sendQuery('second prompt', '/workspace')) {
-        // consume
-      }
+      try {
+        mockRunStreamed.mockResolvedValue({
+          events: (async function* () {
+            yield { type: 'turn.completed', usage: defaultUsage };
+          })(),
+        });
 
-      expect(MockCodex).toHaveBeenCalledTimes(1);
+        for await (const _ of client.sendQuery('first prompt', '/workspace')) {
+          // consume
+        }
+        for await (const _ of client.sendQuery('second prompt', '/workspace')) {
+          // consume
+        }
+
+        expect(MockCodex).toHaveBeenCalledTimes(1);
+      } finally {
+        if (origArchon === undefined) delete process.env.ARCHON_DEPLOYMENT_ENVIRONMENT;
+        else process.env.ARCHON_DEPLOYMENT_ENVIRONMENT = origArchon;
+        if (origLogfire === undefined) delete process.env.LOGFIRE_ENVIRONMENT;
+        else process.env.LOGFIRE_ENVIRONMENT = origLogfire;
+      }
     });
 
     test('wraps per-call Codex constructor failures with provider error context', async () => {
@@ -1322,7 +1334,9 @@ describe('sendQuery decomposition behaviors', () => {
   let client: CodexProvider;
 
   beforeEach(() => {
+    resetCodexSingleton();
     client = new CodexProvider({ retryBaseDelayMs: 1 });
+    MockCodex.mockClear();
     mockStartThread.mockClear();
     mockResumeThread.mockClear();
     mockRunStreamed.mockClear();
@@ -1379,6 +1393,214 @@ describe('sendQuery decomposition behaviors', () => {
     // Must contain the enriched classification prefix
     expect(err.message).toContain('Codex crash');
   }, 5_000);
+
+  describe('archon deployment environment tagging', () => {
+    test('passes config.otel.environment when ARCHON_DEPLOYMENT_ENVIRONMENT is set', async () => {
+      const originalVal = process.env.ARCHON_DEPLOYMENT_ENVIRONMENT;
+      process.env.ARCHON_DEPLOYMENT_ENVIRONMENT = 'archon-execute-cleanup-pr-codex';
+
+      try {
+        mockRunStreamed.mockResolvedValue({
+          events: (async function* () {
+            yield { type: 'turn.completed', usage: defaultUsage };
+          })(),
+        });
+
+        for await (const _ of client.sendQuery('test', '/workspace')) {
+          // consume
+        }
+
+        expect(MockCodex).toHaveBeenCalledWith(
+          expect.objectContaining({
+            config: { otel: { environment: 'archon-execute-cleanup-pr-codex' } },
+          })
+        );
+      } finally {
+        if (originalVal === undefined) delete process.env.ARCHON_DEPLOYMENT_ENVIRONMENT;
+        else process.env.ARCHON_DEPLOYMENT_ENVIRONMENT = originalVal;
+      }
+    });
+
+    test('falls back to LOGFIRE_ENVIRONMENT when ARCHON_DEPLOYMENT_ENVIRONMENT is absent', async () => {
+      const origArchon = process.env.ARCHON_DEPLOYMENT_ENVIRONMENT;
+      const origLogfire = process.env.LOGFIRE_ENVIRONMENT;
+      delete process.env.ARCHON_DEPLOYMENT_ENVIRONMENT;
+      process.env.LOGFIRE_ENVIRONMENT = 'archon-foo-logfire';
+
+      try {
+        mockRunStreamed.mockResolvedValue({
+          events: (async function* () {
+            yield { type: 'turn.completed', usage: defaultUsage };
+          })(),
+        });
+
+        for await (const _ of client.sendQuery('test', '/workspace')) {
+          // consume
+        }
+
+        expect(MockCodex).toHaveBeenCalledWith(
+          expect.objectContaining({
+            config: { otel: { environment: 'archon-foo-logfire' } },
+          })
+        );
+      } finally {
+        if (origArchon === undefined) delete process.env.ARCHON_DEPLOYMENT_ENVIRONMENT;
+        else process.env.ARCHON_DEPLOYMENT_ENVIRONMENT = origArchon;
+        if (origLogfire === undefined) delete process.env.LOGFIRE_ENVIRONMENT;
+        else process.env.LOGFIRE_ENVIRONMENT = origLogfire;
+      }
+    });
+
+    test('ARCHON_DEPLOYMENT_ENVIRONMENT takes precedence over LOGFIRE_ENVIRONMENT', async () => {
+      const origArchon = process.env.ARCHON_DEPLOYMENT_ENVIRONMENT;
+      const origLogfire = process.env.LOGFIRE_ENVIRONMENT;
+      process.env.ARCHON_DEPLOYMENT_ENVIRONMENT = 'archon-winner';
+      process.env.LOGFIRE_ENVIRONMENT = 'archon-loser';
+
+      try {
+        mockRunStreamed.mockResolvedValue({
+          events: (async function* () {
+            yield { type: 'turn.completed', usage: defaultUsage };
+          })(),
+        });
+
+        for await (const _ of client.sendQuery('test', '/workspace')) {
+          // consume
+        }
+
+        expect(MockCodex).toHaveBeenCalledWith(
+          expect.objectContaining({
+            config: { otel: { environment: 'archon-winner' } },
+          })
+        );
+      } finally {
+        if (origArchon === undefined) delete process.env.ARCHON_DEPLOYMENT_ENVIRONMENT;
+        else process.env.ARCHON_DEPLOYMENT_ENVIRONMENT = origArchon;
+        if (origLogfire === undefined) delete process.env.LOGFIRE_ENVIRONMENT;
+        else process.env.LOGFIRE_ENVIRONMENT = origLogfire;
+      }
+    });
+
+    test('uses singleton when neither env var is set and no requestEnv', async () => {
+      const origArchon = process.env.ARCHON_DEPLOYMENT_ENVIRONMENT;
+      const origLogfire = process.env.LOGFIRE_ENVIRONMENT;
+      delete process.env.ARCHON_DEPLOYMENT_ENVIRONMENT;
+      delete process.env.LOGFIRE_ENVIRONMENT;
+
+      try {
+        mockRunStreamed.mockResolvedValue({
+          events: (async function* () {
+            yield { type: 'turn.completed', usage: defaultUsage };
+          })(),
+        });
+
+        for await (const _ of client.sendQuery('test', '/workspace')) {
+          // consume
+        }
+        for await (const _ of client.sendQuery('test2', '/workspace')) {
+          // consume
+        }
+
+        // Singleton: only one Codex instance created
+        expect(MockCodex).toHaveBeenCalledTimes(1);
+        // No config key in constructor args
+        const ctorArgs = MockCodex.mock.calls[0]![0] as Record<string, unknown>;
+        expect(ctorArgs.config).toBeUndefined();
+      } finally {
+        if (origArchon === undefined) delete process.env.ARCHON_DEPLOYMENT_ENVIRONMENT;
+        else process.env.ARCHON_DEPLOYMENT_ENVIRONMENT = origArchon;
+        if (origLogfire === undefined) delete process.env.LOGFIRE_ENVIRONMENT;
+        else process.env.LOGFIRE_ENVIRONMENT = origLogfire;
+      }
+    });
+
+    test('passes both env and config when requestEnv and ARCHON_DEPLOYMENT_ENVIRONMENT are set', async () => {
+      const origArchon = process.env.ARCHON_DEPLOYMENT_ENVIRONMENT;
+      const origLogfire = process.env.LOGFIRE_ENVIRONMENT;
+      process.env.ARCHON_DEPLOYMENT_ENVIRONMENT = 'archon-both-test';
+      delete process.env.LOGFIRE_ENVIRONMENT;
+
+      try {
+        mockRunStreamed.mockResolvedValue({
+          events: (async function* () {
+            yield { type: 'turn.completed', usage: defaultUsage };
+          })(),
+        });
+
+        for await (const _ of client.sendQuery('test', '/workspace', undefined, {
+          env: { MY_SECRET: 'abc123' },
+        })) {
+          // consume
+        }
+
+        expect(MockCodex).toHaveBeenCalledWith(
+          expect.objectContaining({
+            env: expect.objectContaining({ MY_SECRET: 'abc123' }),
+            config: { otel: { environment: 'archon-both-test' } },
+          })
+        );
+      } finally {
+        if (origArchon === undefined) delete process.env.ARCHON_DEPLOYMENT_ENVIRONMENT;
+        else process.env.ARCHON_DEPLOYMENT_ENVIRONMENT = origArchon;
+        if (origLogfire === undefined) delete process.env.LOGFIRE_ENVIRONMENT;
+        else process.env.LOGFIRE_ENVIRONMENT = origLogfire;
+      }
+    });
+
+    test('reads ARCHON_DEPLOYMENT_ENVIRONMENT from requestEnv when present', async () => {
+      const origArchon = process.env.ARCHON_DEPLOYMENT_ENVIRONMENT;
+      delete process.env.ARCHON_DEPLOYMENT_ENVIRONMENT;
+
+      try {
+        mockRunStreamed.mockResolvedValue({
+          events: (async function* () {
+            yield { type: 'turn.completed', usage: defaultUsage };
+          })(),
+        });
+
+        for await (const _ of client.sendQuery('test', '/workspace', undefined, {
+          env: { ARCHON_DEPLOYMENT_ENVIRONMENT: 'archon-from-request-env' },
+        })) {
+          // consume
+        }
+
+        expect(MockCodex).toHaveBeenCalledWith(
+          expect.objectContaining({
+            config: { otel: { environment: 'archon-from-request-env' } },
+          })
+        );
+      } finally {
+        if (origArchon === undefined) delete process.env.ARCHON_DEPLOYMENT_ENVIRONMENT;
+        else process.env.ARCHON_DEPLOYMENT_ENVIRONMENT = origArchon;
+      }
+    });
+
+    test('bypasses singleton for each call when archon config is set', async () => {
+      const origArchon = process.env.ARCHON_DEPLOYMENT_ENVIRONMENT;
+      process.env.ARCHON_DEPLOYMENT_ENVIRONMENT = 'archon-bypass-test';
+
+      try {
+        mockRunStreamed.mockResolvedValue({
+          events: (async function* () {
+            yield { type: 'turn.completed', usage: defaultUsage };
+          })(),
+        });
+
+        for await (const _ of client.sendQuery('first', '/workspace')) {
+          // consume
+        }
+        for await (const _ of client.sendQuery('second', '/workspace')) {
+          // consume
+        }
+
+        // Per-call path: two distinct Codex instances
+        expect(MockCodex).toHaveBeenCalledTimes(2);
+      } finally {
+        if (origArchon === undefined) delete process.env.ARCHON_DEPLOYMENT_ENVIRONMENT;
+        else process.env.ARCHON_DEPLOYMENT_ENVIRONMENT = origArchon;
+      }
+    });
+  });
 
   test('todo_list dedup state resets between retry attempts', async () => {
     const todoItem = {

@@ -8,6 +8,11 @@ import {
   type TurnOptions,
   type TurnCompletedEvent,
 } from '@openai/codex-sdk';
+
+// Mirrors the SDK's unexported CodexConfigObject (nested objects flattened to dotted paths by the SDK)
+interface CodexConfigObject {
+  [key: string]: string | number | boolean | CodexConfigObject;
+}
 import type {
   IAgentProvider,
   SendQueryOptions,
@@ -85,6 +90,17 @@ function buildCodexEnv(requestEnv: Record<string, string>): Record<string, strin
   );
   // Managed project env intentionally overrides inherited process env for project-scoped execution.
   return { ...baseEnv, ...requestEnv };
+}
+
+// FORK-ONLY: see .archon/_temp/f-lf2-codex-otel-tagging.md in cognoco/eduagent-build
+function buildArchonCodexConfig(env?: Record<string, string>): CodexConfigObject | undefined {
+  const value =
+    env?.ARCHON_DEPLOYMENT_ENVIRONMENT ??
+    env?.LOGFIRE_ENVIRONMENT ??
+    process.env.ARCHON_DEPLOYMENT_ENVIRONMENT ??
+    process.env.LOGFIRE_ENVIRONMENT;
+  if (!value) return undefined;
+  return { otel: { environment: value } };
 }
 
 const CODEX_MODEL_FALLBACKS: Record<string, string> = {
@@ -515,14 +531,19 @@ export class CodexProvider implements IAgentProvider {
     configCodexBinaryPath: string | undefined,
     requestEnv?: Record<string, string>
   ): Promise<Codex> {
-    if (!requestEnv || Object.keys(requestEnv).length === 0) {
+    // FORK-ONLY: derive otel config from archon deployment env
+    const archonConfig = buildArchonCodexConfig(requestEnv);
+    const hasRequestEnv = !!requestEnv && Object.keys(requestEnv).length > 0;
+
+    if (!hasRequestEnv && !archonConfig) {
       return getCodex(configCodexBinaryPath);
     }
 
     try {
       return new Codex({
         codexPathOverride: await resolveCodexBinaryPath(configCodexBinaryPath),
-        env: buildCodexEnv(requestEnv),
+        ...(hasRequestEnv && requestEnv && { env: buildCodexEnv(requestEnv) }),
+        ...(archonConfig && { config: archonConfig }),
       });
     } catch (error) {
       const err = error as Error;
