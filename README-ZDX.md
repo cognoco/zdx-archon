@@ -50,6 +50,21 @@ sudo launchctl kickstart -k system/com.archon.server
 
 Hard-refresh the browser (`Cmd+Shift+R`) to clear cached assets.
 
+## Rebuilding Local Binaries
+
+After syncing upstream or changing server/CLI code, rebuild the local Archon binaries from the repo root:
+
+```bash
+bun install --frozen-lockfile
+bun run build:binaries
+```
+
+The macOS binary is written to `dist/binaries/archon-darwin-arm64`. The local launcher at `~/.local/bin/archon` is expected to point at that rebuilt binary.
+
+This does not rebuild or deploy dashboard assets. If frontend code changed, also follow [Deploying Custom Web UI](#deploying-custom-web-ui) so `~/.archon/web-dist/<version>/` contains the forked UI instead of the upstream release cache.
+
+After rebuilding, restart the daemon using the command in [Updating from upstream release](#updating-from-upstream-release).
+
 ## Archon Serve — Background Daemon (macOS)
 
 `archon serve` runs as a system-level LaunchDaemon, starting automatically on boot and restarting on crash.
