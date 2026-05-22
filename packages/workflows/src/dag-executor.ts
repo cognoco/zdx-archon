@@ -1237,8 +1237,25 @@ async function executeNodeInternal(
   }
 }
 
-/** Default timeout for subprocess nodes (bash, script): 2 minutes */
-const SUBPROCESS_DEFAULT_TIMEOUT = 120_000;
+/** Default timeout for subprocess nodes (bash, script): 30 minutes.
+ *  2 minutes is unrealistically tight for any real test suite / lint /
+ *  typecheck pass. Per-node `timeout` (or `idle_timeout` as a fallback)
+ *  overrides this. The cap exists to keep a genuinely-hung command from
+ *  pinning a slot forever; 30 min comfortably accommodates a full repo
+ *  validation while still bounded. */
+const SUBPROCESS_DEFAULT_TIMEOUT = 30 * 60_000;
+
+/**
+ * Max stdout/stderr buffer for bash/script nodes (100 MB).
+ *
+ * Node's `child_process.execFile` defaults to 1 MB, which trips on any
+ * non-trivial test suite run (jest with verbose mode, lint with all-files
+ * output, etc.) and surfaces as `ERR_CHILD_PROCESS_STDIO_MAXBUFFER` — the
+ * child is killed before completing. 100 MB comfortably handles realistic
+ * full-repo validation output while still bounding daemon memory under
+ * pathological commands.
+ */
+const SUBPROCESS_MAX_BUFFER = 100 * 1024 * 1024;
 
 /**
  * Execute a bash (shell script) DAG node.
@@ -1304,7 +1321,7 @@ async function executeBashNode(
   );
   const finalScript = substituteNodeOutputRefs(substitutedScript, nodeOutputs, true);
 
-  const timeout = node.timeout ?? SUBPROCESS_DEFAULT_TIMEOUT;
+  const timeout = node.timeout ?? node.idle_timeout ?? SUBPROCESS_DEFAULT_TIMEOUT;
   const subprocessEnv: NodeJS.ProcessEnv = {
     ...process.env,
     ARTIFACTS_DIR: artifactsDir,
@@ -1326,6 +1343,7 @@ async function executeBashNode(
       cwd,
       timeout,
       env: subprocessEnv,
+      maxBuffer: SUBPROCESS_MAX_BUFFER,
     });
 
     // Trim trailing newline from stdout (common shell behavior)
@@ -1479,7 +1497,7 @@ async function executeScriptNode(
   );
   const finalScript = substituteNodeOutputRefs(substitutedScript, nodeOutputs, false);
 
-  const timeout = node.timeout ?? SUBPROCESS_DEFAULT_TIMEOUT;
+  const timeout = node.timeout ?? node.idle_timeout ?? SUBPROCESS_DEFAULT_TIMEOUT;
   const subprocessEnv: NodeJS.ProcessEnv = {
     ...process.env,
     ARTIFACTS_DIR: artifactsDir,
@@ -1595,6 +1613,7 @@ async function executeScriptNode(
       cwd,
       timeout,
       env: subprocessEnv,
+      maxBuffer: SUBPROCESS_MAX_BUFFER,
     });
 
     // Trim trailing newline from stdout (common shell behavior)
@@ -2147,6 +2166,7 @@ async function executeLoopNode(
         await execFileAsync('bash', ['-c', substitutedBash], {
           cwd,
           timeout: SUBPROCESS_DEFAULT_TIMEOUT,
+          maxBuffer: SUBPROCESS_MAX_BUFFER,
           env: {
             ...process.env,
             USER_MESSAGE: workflowRun.user_message,
