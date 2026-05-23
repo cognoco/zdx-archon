@@ -1387,8 +1387,22 @@ async function executeBashNode(
 
     return { state: 'completed', output };
   } catch (error) {
-    const err = error as Error & { killed?: boolean; code?: number | string; stderr?: string };
-    const isTimeout = err.killed === true || (err.message ?? '').includes('timed out');
+    const err = error as Error & {
+      killed?: boolean;
+      code?: number | string;
+      signal?: string;
+      stderr?: string;
+    };
+    // Only treat as a timeout when Node's execFile actually killed the child via
+    // SIGTERM (its default killSignal on the `timeout` option). The previous
+    // substring check on err.message produced false positives: execFile packs
+    // the child's stderr into err.message, and application logs frequently
+    // contain "timed out" warning strings, leading to real exit-N failures
+    // being mis-reported as bash-node timeouts.
+    // maxBuffer also kills with SIGTERM, but it sets `err.code` to
+    // 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' — distinguish that.
+    const isMaxBuffer = err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER';
+    const isTimeout = !isMaxBuffer && err.killed === true && err.signal === 'SIGTERM';
     const label = `Bash node '${node.id}'`;
     // Always run the formatter so logs get sanitized fields regardless of which
     // user-facing branch we end up in — the timeout message also contains the
@@ -1657,8 +1671,16 @@ async function executeScriptNode(
 
     return { state: 'completed', output };
   } catch (error) {
-    const err = error as Error & { killed?: boolean; code?: number | string; stderr?: string };
-    const isTimeout = err.killed === true || (err.message ?? '').includes('timed out');
+    const err = error as Error & {
+      killed?: boolean;
+      code?: number | string;
+      signal?: string;
+      stderr?: string;
+    };
+    // See bash-node site above for rationale: only treat as a timeout when
+    // execFile killed the child via SIGTERM, and distinguish maxBuffer.
+    const isMaxBuffer = err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER';
+    const isTimeout = !isMaxBuffer && err.killed === true && err.signal === 'SIGTERM';
     const label = `Script node '${node.id}'`;
     // Always run the formatter so logs get sanitized fields regardless of which
     // user-facing branch we end up in — the timeout message also contains the
