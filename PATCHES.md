@@ -24,7 +24,7 @@ upstreaming.
 | --- | ---------- | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ----------------- |
 | 1   | `19931557` | `packages/workflows/src/dag-executor.ts`      | maxBuffer 1 MB → 100 MB on bash / script / loop-until_bash subprocess execs                                          | not yet           |
 | 2   | `19931557` | `packages/workflows/src/dag-executor.ts`      | SUBPROCESS_DEFAULT_TIMEOUT 2 min → 30 min; honor `node.idle_timeout` as fallback                                     | not yet           |
-| 3   | `890ff580` | `packages/workflows/src/dag-executor.ts`      | bash / script error classifier: drop substring `'timed out'` match; require SIGTERM+killed and distinguish maxBuffer | not yet           |
+| 3   | `2c98ae1b` | `packages/workflows/src/dag-executor.ts`      | bash / script error classifier: drop substring `'timed out'` match; require SIGTERM+killed and distinguish maxBuffer | not yet           |
 | 4   | `d9b64e05` | `packages/providers/package.json`, `bun.lock` | `@openai/codex-sdk` 0.125 → 0.132 to match installed codex CLI                                                       | n/a (vendor bump) |
 
 Upstream base when this file was first written: `aa71520a fix(providers): expand ${VAR_NAME} brace syntax in MCP config env vars (#1728)` — last commit reachable from `upstream/dev` at merge time.
@@ -101,7 +101,7 @@ Both `timeout` and `maxBuffer` overruns kill with SIGTERM via execFile's `killSi
 
 **Files.** `packages/workflows/src/dag-executor.ts` — two call sites (bash node, script node). The loop-`until_bash` site has its own simpler handler that doesn't need this change.
 
-**Reproduce on clean upstream.** Cherry-pick `890ff580` (or `git show 890ff580 -- packages/workflows/src/dag-executor.ts | git apply -`).
+**Reproduce on clean upstream.** Cherry-pick `2c98ae1b` (or `git show 2c98ae1b -- packages/workflows/src/dag-executor.ts | git apply -`).
 
 **Test.** Create a bash node whose command is `echo "request timed out"; exit 1`. On unpatched: reported as `timed out after Nms` (wrong). On patched: reported as `failed [exit 1]: request timed out` with the real exit code surfaced.
 
