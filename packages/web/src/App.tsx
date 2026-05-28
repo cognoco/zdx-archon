@@ -12,6 +12,7 @@ import { WorkflowsPage } from '@/routes/WorkflowsPage';
 import { WorkflowExecutionPage } from '@/routes/WorkflowExecutionPage';
 import { WorkflowBuilderPage } from '@/routes/WorkflowBuilderPage';
 import { SettingsPage } from '@/routes/SettingsPage';
+import { ConsoleApp } from '@/experiments/console/ConsoleApp';
 
 interface ErrorBoundaryState {
   hasError: boolean;
@@ -69,6 +70,8 @@ export function App(): React.ReactElement {
           <ProjectProvider>
             <BrowserRouter>
               <Routes>
+                {/* Console experiment mounts OUTSIDE Layout so it does not inherit TopNav. */}
+                <Route path="/console/*" element={<ConsoleApp />} />
                 <Route element={<Layout />}>
                   <Route path="/" element={<Navigate to="/chat" replace />} />
                   <Route path="/chat" element={<ChatPage />} />
