@@ -11,12 +11,66 @@ upstreaming.
 - **Source-of-truth for runtime config** that depends on these patches lives
   in `nexus/zdx/archon/` (workflows, scripts, commands) and is deployed to
   `~/.archon/` via `nexus/zdx/archon/deploy.sh`.
-- **Rebuild the binary** after touching any source file:
+- **Quick binary rebuild** (source-only tweak, no version bump, web unchanged):
   - `bun --filter @archon/workflows type-check`
   - `TARGET=bun-darwin-arm64 OUTFILE=dist/binaries/archon-darwin-arm64 bash scripts/build-binaries.sh`
   - `kill <archon-serve-pid>` (launchd KeepAlive respawns from the new binary)
+  - For a full upstream-sync redeploy (binary **and** dashboard **and** DB),
+    use the runbook below — the dashboard is a separate build and is easy to forget.
 - **Verify a patch landed in the compiled binary**: each numeric constant or
   unique error string in the patch should appear in `strings dist/binaries/archon-darwin-arm64 | grep <distinctive-token>`. See per-patch verify lines below.
+
+## Upgrade & redeploy runbook (upstream sync → live daemon)
+
+The local daemon is the `diy.archon.serve` user LaunchAgent
+(`~/Library/LaunchAgents/diy.archon.serve.plist`, `KeepAlive=true`,
+`RunAtLoad=true`) running `~/.local/bin/archon serve` — and `~/.local/bin/archon`
+is a **symlink → `dist/binaries/archon-darwin-arm64`**, so a rebuild auto-updates
+what the daemon will run on its next start. Default port `3090`.
+
+> ⚠️ **The web dashboard is built and deployed separately from the binary, and
+> the failure mode is silent.** `build-binaries.sh` compiles only the
+> server/CLI. `archon serve` serves the web UI from `~/.archon/web-dist/<version>/`,
+> and if that dir is missing it **downloads `archon-web.tar.gz` from upstream
+> `coleam00/Archon`** releases keyed by version (`packages/cli/src/commands/serve.ts`
+> → `GITHUB_REPO`). On a **version bump** (e.g. 0.3.12 → 0.4.1) `web-dist/<new-version>/`
+> won't exist, so a restart would quietly fetch _upstream's_ dashboard and drop our
+> web customizations (theme toggle) — with no error. Always build + place our own
+> `web-dist/<version>` before restarting after a version change.
+
+1. **Merge upstream & resolve.** `git merge --no-ff upstream/dev`; resolve
+   conflicts; `bun install` to regenerate `bun.lock`; `bun run type-check`.
+   (Known: the Pi community provider may fail type-check/lint on upstream
+   breakage — see the caveat note under the patch index. `bun build` strips types,
+   so binaries still compile; the merge commit may need `--no-verify`.)
+2. **Back up the DB** (WAL-safe online snapshot — `sqlite3` is installed):
+   `sqlite3 ~/.archon/archon.db ".backup '$HOME/.archon/archon.db.backup-$(date +%Y%m%dT%H%M%S)'"`
+   then `sqlite3 <backup> "PRAGMA integrity_check;"`. Migrations run automatically
+   on the new binary's first DB connect and are additive/idempotent (e.g. v0.4.1
+   `user_id` columns + indexes, #1792), so this is a rollback point, not a gate.
+3. **Rebuild binaries.** `bash scripts/build-binaries.sh` (all four targets;
+   or single-target via `TARGET=/OUTFILE=`). The host is `darwin-arm64`.
+4. **Build & deploy the dashboard** (do this whenever the version changed):
+   ```bash
+   bun --filter @archon/web build                 # → packages/web/dist (index.html + assets)
+   VER=$(node -p "require('./package.json').version")
+   DEST=~/.archon/web-dist/$VER
+   rm -rf "$DEST.tmp" && mkdir -p "$DEST.tmp" && cp -R packages/web/dist/. "$DEST.tmp"/
+   test -f "$DEST.tmp/index.html" && rm -rf "$DEST" && mv "$DEST.tmp" "$DEST"   # atomic
+   ```
+5. **Restart the daemon.** Over SSH/headless the GUI launchd domain
+   (`gui/$(id -u)/diy.archon.serve`) is **not reachable**, so `launchctl kickstart`
+   silently no-ops. Use the signal path instead — KeepAlive respawns from the new binary:
+   `kill -TERM $(ps aux | grep "[a]rchon serve" | awk '{print $2}')`.
+   (Don't use `pgrep -f "archon serve"` to find the PID — it matches your own shell;
+   the `[a]rchon` bracket trick above avoids that.)
+6. **Verify.**
+   - `curl -s localhost:3090/api/health` → `status:ok`, correct `version`.
+   - Serving _our_ build (not an upstream download): the asset hash in
+     `curl -s localhost:3090/ | grep -oE 'index-[A-Za-z0-9]+\.js'` must equal the one
+     in `~/.archon/web-dist/$VER/index.html`.
+   - DB migrated: `sqlite3 ~/.archon/archon.db "SELECT name FROM pragma_table_info('remote_agent_conversations') WHERE name='user_id';"`.
+   - Patch constants present: `strings dist/binaries/archon-darwin-arm64 | grep <token>` (per-patch lines below).
 
 ## Patch index
 
