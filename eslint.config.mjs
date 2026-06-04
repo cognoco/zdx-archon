@@ -18,6 +18,7 @@ export default tseslint.config(
       '.claude/worktrees/**',
       '.claude/skills/**',
       '.archon/**', // User workflow/script/command content — not in any tsconfig project
+      'zdx/**', // ZDX execute-workitem deploy source (bun scripts/workflows) — not in any tsconfig project
       '**/*.generated.ts', // Auto-generated source files (content inlined via JSON.stringify)
       '**/*.js',
       '*.mjs',

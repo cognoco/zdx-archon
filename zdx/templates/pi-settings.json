@@ -1,0 +1,12 @@
+{
+  "defaultProvider": "openrouter",
+  "defaultModel": "qwen/qwen3.6-max-preview",
+  "defaultThinkingLevel": "medium",
+  "packages": ["npm:pi-goals"],
+  "retry": {
+    "enabled": true,
+    "maxRetries": 8,
+    "baseDelayMs": 5000,
+    "maxDelayMs": 120000
+  }
+}

@@ -1,0 +1,189 @@
+name: execute-item
+description: |
+  Streamlined execution workflow for SMALL, already-refined Cosmo work items —
+  single-root-cause, ~1–3 file diffs (Altitude=Item is the archetype). A leaner
+  sibling to execute-workitem: the plan / implement-loop / adversarial-review /
+  address-findings / re-validate cycle is collapsed into ONE frontier
+  `execute-goal` node (plan → TDD → one self-review round), and the deep rigor
+  moves to the real PR reviewers plus a hardened PR phase (mandatory triage
+  comment + an independent completion-audit backstop against false "all green").
+
+  Assumes the item is refined (DoR met). The fetch node is the fail-fast DoR
+  gate — it hard-fails on a non-Ready / non-Active / non-Auto item rather than
+  refining inline. (v2: branch to /zdx:refine when it exists.)
+
+  Usage: archon workflow run execute-item --branch <WI-NN> "<WI-NN | Notion URL>"
+  Run from inside the target repo (or --cwd <repo>). The work item's Project
+  (repo, 1:1) must match the repo Archon runs in. `--branch <WI-NN>` names the
+  worktree branch per the worktree standard.
+
+  Boundary: ends at Stage=Reviewing (claim released, Resolved date set). Closure
+  — including Resolution=Done and the PR merge — is a human / /zdx:close gate.
+
+  Frontier-tier v1. A Pi/cheap copy (execute-item-cheap) follows once proven.
+
+  Source-of-truth: nexus repo zdx/archon/. Deployed to ~/.archon/ via
+  zdx/archon/deploy.sh.
+
+# Workflow-level default = frontier model (Codex gpt-5.5). Every node overrides
+# explicitly below; this default is the floor.
+provider: codex
+model: gpt-5.5
+modelReasoningEffort: medium
+
+worktree:
+  enabled: true
+
+nodes:
+  # ── PHASE 0: INIT ──────────────────────────────────────────────────
+  - id: init-tracing
+    bash: ~/.archon/scripts/init-tracing.sh --workflow execute-item "$ARGUMENTS"
+
+  # ── PHASE 1: READ & CLAIM ──────────────────────────────────────────
+  # Deterministic. Fetch the work item and assert DoR preconditions
+  # (Stage=Ready, State=Active, ExecutionPath=Auto). Non-zero exit fails
+  # the run — this is the fail-fast DoR gate; the workflow does NOT refine.
+  - id: fetch-and-check
+    depends_on: [init-tracing]
+    bash: bun ~/.archon/scripts/zdx-cosmo.ts fetch "$ARGUMENTS" "$ARTIFACTS_DIR"
+
+  # Claim the item: Claim properties + Stage->Executing + Started=today.
+  - id: claim
+    depends_on: [fetch-and-check]
+    bash: bun ~/.archon/scripts/zdx-cosmo.ts claim "$ARTIFACTS_DIR" "$WORKFLOW_ID" execute-item
+
+  # ── PHASE 1b: PROVISION WORKTREE ───────────────────────────────────
+  # Archon creates the worktree (git worktree add + copyFiles); this runs
+  # the per-repo provisioning (deps, env) from zdx-config.yaml
+  # zdx.setup.command. Repos that need none omit the key and this skips.
+  - id: setup-worktree
+    depends_on: [claim]
+    idle_timeout: 600000
+    bash: ~/.archon/scripts/zdx-setup.sh
+
+  # ── PHASE 2: EXECUTE (frontier body — /goal pattern) ───────────────
+  # The collapse: one frontier node does plan → TDD red-green implement →
+  # ONE light self-review round. Emits plan.md with a `## Scope` section
+  # (globs) so scope-guard still works. Out-of-scope discoveries append to
+  # incidental-findings.md. Does NOT commit/push/PR — the push node owns
+  # the commit. Loosely constrained on purpose: let the frontier model
+  # work to its strengths.
+  - id: execute-goal
+    command: zdx-execute-goal
+    depends_on: [setup-worktree]
+    context: fresh
+    idle_timeout: 900000
+    provider: codex
+    model: gpt-5.5
+    modelReasoningEffort: high
+
+  # Hard stop on file drift outside plan.md's declared scope.
+  - id: scope-guard
+    depends_on: [execute-goal]
+    bash: bun ~/.archon/scripts/zdx-scope-guard.ts "$ARTIFACTS_DIR" "$BASE_BRANCH"
+
+  # Full repo validation (zdx.validate.command from the target repo).
+  - id: validate
+    depends_on: [scope-guard]
+    idle_timeout: 300000
+    bash: ~/.archon/scripts/zdx-validate.sh
+
+  # ── PHASE 3: PR ────────────────────────────────────────────────────
+  - id: push
+    depends_on: [validate]
+    bash: ~/.archon/scripts/zdx-push.sh "$ARTIFACTS_DIR"
+
+  # Compose PR body from artifacts + repo template, create a READY
+  # (non-draft) PR so review bots fire, reference WI-NN.
+  - id: create-pr
+    command: zdx-create-pr
+    depends_on: [push]
+    context: fresh
+    provider: codex
+    model: gpt-5.5
+    modelReasoningEffort: medium
+
+  # ── PHASE 4: PR ITERATION (the centerpiece) ────────────────────────
+  # Command node (NOT a loop — a loop would inherit the workflow model and
+  # is brittle). Iterates internally up to 5 passes: read CI + reviewer
+  # findings, assess validity, apply the fix-policy, push. On exit it MUST
+  # post a structured triage comment on the PR referencing the latest
+  # review round per-finding. Emits {ci_status}.
+  - id: ci-review
+    command: zdx-ci-review
+    depends_on: [create-pr]
+    context: fresh
+    idle_timeout: 1800000
+    provider: codex
+    model: gpt-5.5
+    modelReasoningEffort: high
+    output_format:
+      type: object
+      additionalProperties: false
+      properties:
+        ci_status:
+          type: string
+          enum: [green, escalated]
+      required: [ci_status]
+
+  # Independent backstop against false "all green". Different model for
+  # fresh eyes (Claude Opus). Re-reads the ACTUAL gh PR state — not the
+  # ci-review self-report — confirms every crit/high/med finding from the
+  # latest round is either fixed or justified-in-writing in the PR comment,
+  # fixing or documenting any gap. This node's verdict is final and is what
+  # finalize trusts.
+  - id: completion-audit
+    command: zdx-completion-audit
+    depends_on: [ci-review]
+    context: fresh
+    idle_timeout: 1800000
+    provider: claude
+    model: opus
+    effort: high
+    output_format:
+      type: object
+      additionalProperties: false
+      properties:
+        ci_status:
+          type: string
+          enum: [green, escalated]
+      required: [ci_status]
+
+  # ── PHASE 5: FINALIZE ZDX ──────────────────────────────────────────
+  - id: check-incidental
+    depends_on: [completion-audit]
+    bash: |
+      f="$ARTIFACTS_DIR/incidental-findings.md"
+      if [ -s "$f" ]; then echo "HAS_FINDINGS"; else echo "NONE"; fi
+
+  # File a new ZDX work item (Stage=Captured) per incidental issue
+  # discovered during execution, linked to the originating item.
+  - id: incidental-workitems
+    command: zdx-incidental-workitems
+    depends_on: [check-incidental]
+    when: "$check-incidental.output == 'HAS_FINDINGS'"
+    context: fresh
+    provider: codex
+    model: gpt-5.5
+    modelReasoningEffort: medium
+
+  # Completion summary (work-lifecycle template).
+  - id: compose-summary
+    command: zdx-compose-summary
+    depends_on: [check-incidental, incidental-workitems]
+    trigger_rule: none_failed_min_one_success
+    context: fresh
+    provider: codex
+    model: gpt-5.5
+    modelReasoningEffort: medium
+
+  # Write summary into the work item body, Stage->Reviewing, Resolved=today,
+  # settle claim. Trusts completion-audit's verdict (the final authority).
+  # If escalated, also set State->Awaiting Info.
+  - id: finalize
+    depends_on: [compose-summary]
+    bash: bun ~/.archon/scripts/zdx-cosmo.ts complete "$ARTIFACTS_DIR" "$completion-audit.output.ci_status"
+
+  - id: summary
+    depends_on: [finalize]
+    bash: ~/.archon/scripts/zdx-summary.sh "$ARTIFACTS_DIR"

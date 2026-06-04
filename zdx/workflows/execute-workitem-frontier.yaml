@@ -1,0 +1,213 @@
+name: execute-workitem-frontier
+description: |
+  Frontier-tier variant of execute-workitem. Identical DAG, but the
+  cheap-coder spot (implement loop + address-findings) is run by a
+  frontier model (codex/gpt-5.5/medium) instead of the cheap-tier
+  implementer. Use this when you want a frontier model doing the heavy
+  implementation lifting — same WI, different implementer tier. (Also
+  isolates "workflow itself works" from cheap-tier model issues.)
+
+  Usage: archon workflow run execute-workitem-frontier --branch wi/<WI-NN>-frontier "<WI-NN | Notion URL>"
+  Run from inside the target repo (or --cwd <repo>). The work item's
+  Project (repo, 1:1) must match the repo Archon runs in.
+
+  Boundary: ends at Stage=Reviewing. Closure is a human / /zdx:close gate.
+
+  Source-of-truth: nexus repo zdx/archon/. Deployed to ~/.archon/ via
+  zdx/archon/deploy.sh. Design: _WIP/zdx-productionization/execute-workitem-design.md
+
+# Workflow-level default = frontier model (Codex gpt-5.5, medium reasoning).
+# The `implement` loop node inherits this. Every non-loop node overrides
+# explicitly below. (Frontier-tier variant of execute-workitem.yaml — same
+# DAG, frontier model in the implementer slot instead of the cheap tier.)
+provider: codex
+model: gpt-5.5
+modelReasoningEffort: medium
+
+worktree:
+  enabled: true
+
+nodes:
+  # ── PHASE 0: INIT ──────────────────────────────────────────────────
+  - id: init-tracing
+    bash: ~/.archon/scripts/init-tracing.sh --workflow execute-workitem "$ARGUMENTS"
+
+  # ── PHASE 1: READ & CLAIM ──────────────────────────────────────────
+  # Deterministic. Fetch the work item, assert defence-in-depth
+  # preconditions (a well-behaved dispatcher should already guarantee
+  # them), write workitem.json. Non-zero exit fails the run.
+  - id: fetch-and-check
+    depends_on: [init-tracing]
+    bash: bun ~/.archon/scripts/zdx-cosmo.ts fetch "$ARGUMENTS" "$ARTIFACTS_DIR"
+
+  # Claim the item: Claim properties + Stage->Executing + Started=today.
+  - id: claim
+    depends_on: [fetch-and-check]
+    bash: bun ~/.archon/scripts/zdx-cosmo.ts claim "$ARTIFACTS_DIR" "$WORKFLOW_ID" execute-workitem-frontier
+
+  # ── PHASE 1b: PROVISION WORKTREE ───────────────────────────────────
+  # Archon's worktree creation does `git worktree add` + copyFiles only —
+  # it does NOT install dependencies or generate repo-local env. The
+  # worktree-setup command (dependency install, env generation) is
+  # declared per-repo in zdx-config.yaml's `zdx.setup.command`. Repos
+  # that need no provisioning omit the key; zdx-setup.sh then skips.
+  - id: setup-worktree
+    depends_on: [claim]
+    idle_timeout: 600000
+    bash: ~/.archon/scripts/zdx-setup.sh
+
+  # ── PHASE 2: PLAN ──────────────────────────────────────────────────
+  # Orchestrator. Reads workitem.json, explores the codebase, writes
+  # plan.md (task list + per-task completion criteria + the TESTS that
+  # define done + declared file scope). Scope judgement lives here:
+  # closely-related work folds into the plan; unrelated issues append
+  # to incidental-findings.md.
+  - id: plan
+    command: zdx-plan
+    depends_on: [setup-worktree]
+    context: fresh
+    provider: codex
+    model: gpt-5.5
+    modelReasoningEffort: high
+
+  # ── PHASE 3: IMPLEMENT (TDD, cheap coder) ──────────────────────────
+  # Loop node — inherits the workflow-level model (codex/gpt-5.5 medium).
+  # Ralph-style: fresh context each iteration, drive the failing tests
+  # from plan.md to green. until_bash = task list complete AND the
+  # repo's test command exits 0.
+  - id: implement
+    depends_on: [plan]
+    idle_timeout: 600000
+    loop:
+      prompt: |
+        Read and execute `~/.archon/commands/zdx-implement.md`.
+        Artifacts directory: $ARTIFACTS_DIR
+      until: ALL_TASKS_COMPLETE
+      until_bash: ~/.archon/scripts/check-implement-done.sh "$ARTIFACTS_DIR"
+      max_iterations: 25
+      fresh_context: true
+
+  # Hard stop on file drift outside plan.md's declared scope.
+  - id: scope-guard
+    depends_on: [implement]
+    bash: bun ~/.archon/scripts/zdx-scope-guard.ts "$ARTIFACTS_DIR" "$BASE_BRANCH"
+
+  # Full repo validation. Command resolved from the target repo's
+  # zdx-config.yaml (zdx.validate.command).
+  - id: validate
+    depends_on: [scope-guard]
+    idle_timeout: 300000
+    bash: ~/.archon/scripts/zdx-validate.sh
+
+  # ── PHASE 4: ADVERSARIAL REVIEW (pre-PR quality gate) ──────────────
+  # Different model from the coder. Reviews the diff vs plan + AC,
+  # writes adversarial-findings.json, emits {verdict}.
+  - id: adversarial-review
+    command: zdx-adversarial-review
+    depends_on: [validate]
+    context: fresh
+    provider: claude
+    model: opus
+    effort: high
+    output_format:
+      type: object
+      properties:
+        verdict:
+          type: string
+          enum: [clean, changes-needed]
+      required: [verdict]
+
+  # Fix the specific findings (concrete spec — safe for the cheap model).
+  - id: address-findings
+    command: zdx-address-findings
+    depends_on: [adversarial-review]
+    when: "$adversarial-review.output.verdict == 'changes-needed'"
+    context: fresh
+    provider: codex
+    model: gpt-5.5
+    modelReasoningEffort: medium
+
+  - id: re-validate
+    depends_on: [address-findings]
+    idle_timeout: 300000
+    bash: ~/.archon/scripts/zdx-validate.sh
+
+  # ── PHASE 5: PR ────────────────────────────────────────────────────
+  # adversarial-review is an always-succeeding anchor so a skipped
+  # re-validate (verdict=clean path) doesn't cascade-skip push.
+  - id: push
+    depends_on: [adversarial-review, re-validate]
+    trigger_rule: none_failed_min_one_success
+    bash: ~/.archon/scripts/zdx-push.sh "$ARTIFACTS_DIR"
+
+  # Compose PR body from artifacts + repo template, create a READY
+  # (non-draft) PR so review bots fire, reference WI-NN.
+  - id: create-pr
+    command: zdx-create-pr
+    depends_on: [push]
+    context: fresh
+    provider: codex
+    model: gpt-5.5
+    modelReasoningEffort: medium
+
+  # ── PHASE 6: CI + EXTERNAL-REVIEW LOOP ─────────────────────────────
+  # Command node (NOT a loop — a loop would inherit pi/kimi). Iterates
+  # internally up to 5 passes: read CI + reviewer findings, assess
+  # validity, apply the fix-policy, push. Emits {ci_status}.
+  - id: ci-review
+    command: zdx-ci-review
+    depends_on: [create-pr]
+    context: fresh
+    idle_timeout: 1800000
+    provider: codex
+    model: gpt-5.5
+    modelReasoningEffort: high
+    output_format:
+      type: object
+      additionalProperties: false
+      properties:
+        ci_status:
+          type: string
+          enum: [green, escalated]
+      required: [ci_status]
+
+  # ── PHASE 7: FINALIZE ZDX ──────────────────────────────────────────
+  # Cheap deterministic gate — skip the LLM filing node when there is
+  # nothing to file.
+  - id: check-incidental
+    depends_on: [ci-review]
+    bash: |
+      f="$ARTIFACTS_DIR/incidental-findings.md"
+      if [ -s "$f" ]; then echo "HAS_FINDINGS"; else echo "NONE"; fi
+
+  # File a new ZDX work item (Stage=Captured) per incidental issue
+  # discovered during execution, linked to the originating item.
+  - id: incidental-workitems
+    command: zdx-incidental-workitems
+    depends_on: [check-incidental]
+    when: "$check-incidental.output == 'HAS_FINDINGS'"
+    context: fresh
+    provider: codex
+    model: gpt-5.5
+    modelReasoningEffort: medium
+
+  # Completion summary (work-lifecycle template).
+  - id: compose-summary
+    command: zdx-compose-summary
+    depends_on: [check-incidental, incidental-workitems]
+    trigger_rule: none_failed_min_one_success
+    context: fresh
+    provider: codex
+    model: gpt-5.5
+    modelReasoningEffort: medium
+
+  # Write summary into the work item body, Stage->Reviewing,
+  # Resolved=today, settle claim. If ci-review escalated, also set
+  # State->Awaiting Info ("Need human review" disposition).
+  - id: finalize
+    depends_on: [compose-summary]
+    bash: bun ~/.archon/scripts/zdx-cosmo.ts complete "$ARTIFACTS_DIR" "$ci-review.output.ci_status"
+
+  - id: summary
+    depends_on: [finalize]
+    bash: ~/.archon/scripts/zdx-summary.sh "$ARTIFACTS_DIR"

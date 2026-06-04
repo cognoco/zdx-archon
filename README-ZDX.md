@@ -38,6 +38,14 @@ Changes on `zdx/customizations` that diverge from upstream:
 
 - **Dark/light/system theme toggle** — CSS variable-based theming with a 3-way toggle (sun/moon/monitor) in the top-right nav bar. Persists to localStorage, respects OS `prefers-color-scheme` in system mode.
 
+- **ZDX `execute-workitem` workflow** (`zdx/`) — the workflow that drives one
+  Cosmo work item to a green PR. Deploy source, _not_ repo-local: `zdx/deploy.sh`
+  installs it into **global** `~/.archon/` (it runs against arbitrary target
+  repos). The two lib-dependent scripts (`zdx-cosmo` = Notion I/O, `zdx-capture`)
+  are bundled at deploy time from the **`cosmo` marketplace plugin** — set
+  `ZDX_MARKETPLACE_HOME` if the zdx-marketplace checkout is not at the default
+  `~/.claude/plugins/marketplaces/zdx-marketplace`. See `zdx/README.md`.
+
 ## Deploying Custom Web UI
 
 After making frontend changes, rebuild and deploy to the daemon:
