@@ -182,7 +182,7 @@ nodes:
   # If escalated, also set State->Awaiting Info.
   - id: finalize
     depends_on: [compose-summary]
-    bash: bun ~/.archon/scripts/zdx-cosmo.ts complete "$ARTIFACTS_DIR" "$completion-audit.output.ci_status"
+    bash: bun ~/.archon/scripts/zdx-cosmo.ts complete "$ARTIFACTS_DIR" $completion-audit.output.ci_status
 
   - id: summary
     depends_on: [finalize]

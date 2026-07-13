@@ -209,7 +209,7 @@ nodes:
   # State->Awaiting Info ("Need human review" disposition).
   - id: finalize
     depends_on: [compose-summary]
-    bash: bun ~/.archon/scripts/zdx-cosmo.ts complete "$ARTIFACTS_DIR" "$ci-review.output.ci_status"
+    bash: bun ~/.archon/scripts/zdx-cosmo.ts complete "$ARTIFACTS_DIR" $ci-review.output.ci_status
 
   - id: summary
     depends_on: [finalize]

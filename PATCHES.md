@@ -74,12 +74,12 @@ what the daemon will run on its next start. Default port `3090`.
 
 ## Patch index
 
-| #   | Commit     | File(s)                                       | Summary                                                                                                              | Upstream PR       |
-| --- | ---------- | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ----------------- |
-| 1   | `19931557` | `packages/workflows/src/dag-executor.ts`      | maxBuffer 1 MB → 100 MB on bash / script / loop-until_bash subprocess execs                                          | not yet           |
-| 2   | `19931557` | `packages/workflows/src/dag-executor.ts`      | SUBPROCESS_DEFAULT_TIMEOUT 2 min → 30 min; honor `node.idle_timeout` as fallback                                     | not yet           |
-| 3   | `2c98ae1b` | `packages/workflows/src/dag-executor.ts`      | bash / script error classifier: drop substring `'timed out'` match; require SIGTERM+killed and distinguish maxBuffer | not yet           |
-| 4   | `d9b64e05` | `packages/providers/package.json`, `bun.lock` | `@openai/codex-sdk` 0.125 → 0.132 to match installed codex CLI                                                       | n/a (vendor bump) |
+| #   | Commit     | File(s)                                       | Summary                                                                                                              | Upstream PR         |
+| --- | ---------- | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------- |
+| 1   | `19931557` | `packages/workflows/src/dag-executor.ts`      | maxBuffer 1 MB → 100 MB on bash / script / loop-until_bash subprocess execs                                          | not yet             |
+| 2   | `19931557` | `packages/workflows/src/dag-executor.ts`      | SUBPROCESS_DEFAULT_TIMEOUT 2 min → 30 min; honor `node.idle_timeout` as fallback                                     | not yet             |
+| 3   | `2c98ae1b` | `packages/workflows/src/dag-executor.ts`      | bash / script error classifier: drop substring `'timed out'` match; require SIGTERM+killed and distinguish maxBuffer | not yet             |
+| 4   | `d9b64e05` | `packages/providers/package.json`, `bun.lock` | **Retired in the v0.5.0 sync:** upstream now uses `@openai/codex-sdk ^0.139.0`, superseding our 0.132 pin            | superseded upstream |
 
 Upstream base when this file was first written: `aa71520a fix(providers): expand ${VAR_NAME} brace syntax in MCP config env vars (#1728)`.
 
@@ -100,6 +100,13 @@ still use the old API. Pi is `builtIn: false` (we run Claude + Codex), and
 but `bun run validate` / the pre-commit hook will be red until upstream fixes pi
 or we pin `@mariozechner/pi-coding-agent` back. The `2026-05-28` merge commit
 used `--no-verify` for this reason.
+
+Synced again on `2026-07-13` against upstream `dev` at `60458483` (v0.5.0 plus
+the post-release development commits present at that ref). Patches 1–3 and the
+fork-only telemetry/theme changes remain active. Patch 4 was dropped because
+upstream's `@openai/codex-sdk ^0.139.0` is newer. Upstream's migration from the
+old `@mariozechner` Pi packages to `@earendil-works` also resolves the historical
+Pi type-check caveat above.
 
 ---
 
